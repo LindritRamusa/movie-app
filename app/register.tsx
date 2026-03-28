@@ -2,7 +2,7 @@ import { MIN_PASSWORD_LEN } from "@/constants/auth";
 import { icons } from "@/constants/icons";
 import { images } from "@/constants/images";
 import { useAuth } from "@/store/AuthContext";
-import { formatAppwriteError } from "@/utils/appwriteErrors";
+import { formatSupabaseError } from "@/utils/supabaseErrors";
 import { Link, useRouter } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import {
@@ -21,7 +21,7 @@ const Register = () => {
   const router = useRouter();
   const {
     signUp,
-    resendRegistrationOtp,
+    resendSignupConfirmationEmail,
     completeRegistrationOtp,
   } = useAuth();
 
@@ -35,7 +35,7 @@ const Register = () => {
   const [formError, setFormError] = useState<string | null>(null);
   const [pendingOtp, setPendingOtp] = useState<{
     email: string;
-    userId: string;
+    name: string;
     otpSent: boolean;
   } | null>(null);
   const submitLockRef = useRef(false);
@@ -82,12 +82,12 @@ const Register = () => {
       }
       setPendingOtp({
         email: result.email,
-        userId: result.userId,
+        name: result.name,
         otpSent: result.otpSent,
       });
       setOtpCode("");
     } catch (e) {
-      setFormError(formatAppwriteError(e, "auth"));
+      setFormError(formatSupabaseError(e, "auth"));
     } finally {
       submitLockRef.current = false;
       setSubmitting(false);
@@ -101,14 +101,26 @@ const Register = () => {
     setFormError(null);
     setOtpSubmitting(true);
     try {
-      await completeRegistrationOtp(pendingOtp.userId, otpCode);
+      await completeRegistrationOtp(
+        pendingOtp.email,
+        pendingOtp.name,
+        password,
+        otpCode
+      );
       router.replace("/(tabs)/profile");
     } catch (e) {
-      setFormError(formatAppwriteError(e, "otp"));
+      setFormError(formatSupabaseError(e, "otp"));
     } finally {
       setOtpSubmitting(false);
     }
-  }, [completeRegistrationOtp, otpCode, otpSubmitting, pendingOtp, router]);
+  }, [
+    completeRegistrationOtp,
+    otpCode,
+    otpSubmitting,
+    password,
+    pendingOtp,
+    router,
+  ]);
 
   const handlePressResendOtp = useCallback(async () => {
     if (!pendingOtp || resendLoading) {
@@ -117,24 +129,24 @@ const Register = () => {
     setResendLoading(true);
     setFormError(null);
     try {
-      const ok = await resendRegistrationOtp(
+      const ok = await resendSignupConfirmationEmail(
         pendingOtp.email,
-        pendingOtp.userId
+        pendingOtp.name
       );
       setPendingOtp((prev) =>
         prev ? { ...prev, otpSent: ok } : prev
       );
       if (!ok) {
         setFormError(
-          "Could not send a new code. Check that Email OTP is enabled in Appwrite Auth, and wait a minute before trying again."
+          "Could not resend the code. Wait a minute, then try again."
         );
       }
     } catch (e) {
-      setFormError(formatAppwriteError(e, "otp"));
+      setFormError(formatSupabaseError(e, "otp"));
     } finally {
       setResendLoading(false);
     }
-  }, [pendingOtp, resendLoading, resendRegistrationOtp]);
+  }, [pendingOtp, resendLoading, resendSignupConfirmationEmail]);
 
   const handlePressBack = useCallback(() => {
     if (pendingOtp) {
@@ -190,13 +202,12 @@ const Register = () => {
               <Text className="text-3xl font-bold text-white">Enter code</Text>
             </View>
 
-            <Text className="text-light-200 text-sm mb-4">
+            <Text className="text-light-200 text-sm mb-4 leading-6">
               We sent a one-time code to{" "}
               <Text className="text-white font-semibold">{pendingOtp.email}</Text>
-              . Enter it below to verify and sign in. Codes expire in about 15
-              minutes.
+              . Enter the numbers from the email to finish creating your account.
               {!pendingOtp.otpSent
-                ? " If you did not get a code, turn on Email OTP in Appwrite and tap Resend."
+                ? " If you did not get a code, tap Resend."
                 : ""}
             </Text>
 
@@ -288,9 +299,9 @@ const Register = () => {
             <Text className="text-3xl font-bold text-white">Create account</Text>
           </View>
 
-          <Text className="text-light-200 text-sm mb-6">
-            After sign up, Appwrite sends a one-time code to your email (Email OTP).
-            You are signed in only after you enter that code on the next screen.
+          <Text className="text-light-200 text-sm mb-6 leading-6">
+            We will email you a one-time code. After you enter it, your password
+            is saved and you are signed in.
           </Text>
 
           <Text className="text-light-200 text-sm mb-1">Name</Text>
@@ -340,7 +351,7 @@ const Register = () => {
             disabled={submitting}
           >
             <Text className="text-white font-bold text-base">
-              {submitting ? "Creating account…" : "Create account"}
+              {submitting ? "Sending code…" : "Create account"}
             </Text>
           </TouchableOpacity>
 

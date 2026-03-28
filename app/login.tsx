@@ -2,7 +2,7 @@ import { MIN_PASSWORD_LEN } from "@/constants/auth";
 import { icons } from "@/constants/icons";
 import { images } from "@/constants/images";
 import { useAuth } from "@/store/AuthContext";
-import { formatAppwriteError } from "@/utils/appwriteErrors";
+import { formatSupabaseError } from "@/utils/supabaseErrors";
 import { Link, useRouter } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import {
@@ -56,7 +56,7 @@ const Login = () => {
       await signIn(trimmedEmail, trimmedPassword);
       router.replace("/(tabs)/profile");
     } catch (e) {
-      setFormError(formatAppwriteError(e, "auth"));
+      setFormError(formatSupabaseError(e, "auth"));
     } finally {
       submitLockRef.current = false;
       setSubmitting(false);
@@ -107,7 +107,7 @@ const Login = () => {
           </View>
 
           <Text className="text-light-200 text-sm mb-6">
-            Use the email and password from your Appwrite project account.
+            Sign in with the email and password you used to create your account.
           </Text>
 
           <Text className="text-light-200 text-sm mb-1">Email</Text>

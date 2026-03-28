@@ -2,9 +2,11 @@ import { icons } from "@/constants/icons";
 import { images } from "@/constants/images";
 import { MAX_PASSWORD_LEN, MIN_PASSWORD_LEN } from "@/constants/auth";
 import { usePasswordRecovery } from "@/hooks/usePasswordRecovery";
-import { formatAppwriteError } from "@/utils/appwriteErrors";
+import { formatSupabaseError } from "@/utils/supabaseErrors";
+import { parseRecoveryTokensFromUrl } from "@/utils/authDeepLink";
+import * as Linking from "expo-linking";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Image,
@@ -28,19 +30,46 @@ const pickParam = (value: string | string[] | undefined): string => {
 const ResetPassword = () => {
   const router = useRouter();
   const params = useLocalSearchParams<{
-    userId?: string | string[];
-    secret?: string | string[];
+    access_token?: string | string[];
+    refresh_token?: string | string[];
   }>();
   const { completeRecovery } = usePasswordRecovery();
 
-  const userId = useMemo(
-    () => pickParam(params.userId),
-    [params.userId]
+  const [linkedAt, setLinkedAt] = useState<{
+    access_token: string;
+    refresh_token: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const applyUrl = (url: string | null) => {
+      if (!url) {
+        return;
+      }
+      const parsed = parseRecoveryTokensFromUrl(url);
+      if (parsed.access_token && parsed.refresh_token) {
+        setLinkedAt({
+          access_token: parsed.access_token,
+          refresh_token: parsed.refresh_token,
+        });
+      }
+    };
+
+    void Linking.getInitialURL().then(applyUrl);
+    const sub = Linking.addEventListener("url", ({ url }) => applyUrl(url));
+    return () => sub.remove();
+  }, []);
+
+  const paramAccess = useMemo(
+    () => pickParam(params.access_token),
+    [params.access_token]
   );
-  const secret = useMemo(
-    () => pickParam(params.secret),
-    [params.secret]
+  const paramRefresh = useMemo(
+    () => pickParam(params.refresh_token),
+    [params.refresh_token]
   );
+
+  const accessToken = paramAccess || linkedAt?.access_token || "";
+  const refreshToken = paramRefresh || linkedAt?.refresh_token || "";
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -56,8 +85,10 @@ const ResetPassword = () => {
   }, []);
 
   const handlePressSubmit = useCallback(async () => {
-    if (!userId || !secret) {
-      setFormError("This reset link is invalid or expired. Request a new one from sign in.");
+    if (!accessToken || !refreshToken) {
+      setFormError(
+        "This reset link is invalid or expired. Request a new one from sign in."
+      );
       return;
     }
     if (password.length < MIN_PASSWORD_LEN) {
@@ -75,22 +106,22 @@ const ResetPassword = () => {
     setFormError(null);
     setSubmitting(true);
     try {
-      await completeRecovery(userId, secret, password);
+      await completeRecovery(accessToken, refreshToken, password);
       Alert.alert("Password updated", "Sign in with your new password.", [
         { text: "OK", onPress: () => router.replace("/login") },
       ]);
     } catch (e) {
-      setFormError(formatAppwriteError(e, "general"));
+      setFormError(formatSupabaseError(e, "general"));
     } finally {
       setSubmitting(false);
     }
-  }, [userId, secret, password, confirm, completeRecovery, router]);
+  }, [accessToken, refreshToken, password, confirm, completeRecovery, router]);
 
   const handlePressBack = useCallback(() => {
     router.replace("/login");
   }, [router]);
 
-  const linkInvalid = !userId || !secret;
+  const linkInvalid = !accessToken || !refreshToken;
 
   return (
     <SafeAreaView className="flex-1 bg-primary">
@@ -129,8 +160,9 @@ const ResetPassword = () => {
 
           {linkInvalid ? (
             <Text className="text-light-200 text-base leading-6 mb-6">
-              Open the reset link from your email on this device. If it expired,
-              use Forgot password on the sign-in screen.
+              Open the password reset link from your email on this device. If it
+              expired, use Forgot password on the sign-in screen. Add your app
+              redirect URL in Supabase Auth URL configuration.
             </Text>
           ) : (
             <>

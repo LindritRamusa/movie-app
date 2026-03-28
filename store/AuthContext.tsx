@@ -1,19 +1,18 @@
 import {
+  type CompleteEmailChangeOtpResult,
   type RegisterResult,
   completeEmailChangeWithOtp,
   completeRegistrationWithEmailOtp,
   registerWithVerificationFlow,
-  resendRegistrationEmailOtp,
+  resendEmailChangeOtp,
+  resendSignupConfirmationEmail,
   signInExistingUser,
+  startEmailChangeWithReauth,
+  updateAccountDisplayName,
+  updateAccountPasswordReauthed,
 } from "@/services/auth";
-import {
-  restoreUserSessionFromStorage,
-  sendEmailVerificationOtpToAddress,
-  signOutAppwrite,
-  updateAccountEmail,
-  updateAccountName,
-  updateAccountPassword,
-} from "@/services/appwrite";
+import { supabase } from "@/services/supabase";
+import type { AuthProfile } from "@/types/auth-profile";
 import {
   createContext,
   useCallback,
@@ -23,56 +22,92 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { Models } from "react-native-appwrite";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 
-export type { RegisterResult };
+export type { CompleteEmailChangeOtpResult, RegisterResult };
+
+const toAuthProfile = (u: SupabaseUser): AuthProfile => {
+  const meta = u.user_metadata as Record<string, unknown> | undefined;
+  const fromMeta =
+    (typeof meta?.full_name === "string" && meta.full_name.trim()) ||
+    (typeof meta?.name === "string" && meta.name.trim()) ||
+    "";
+  return {
+    id: u.id,
+    email: u.email ?? "",
+    name: fromMeta,
+    emailVerified: !!u.email_confirmed_at,
+  };
+};
 
 interface AuthContextValue {
-  user: Models.User | null;
+  user: AuthProfile | null;
   isReady: boolean;
-  signIn: (email: string, password: string) => Promise<Models.User>;
+  signIn: (email: string, password: string) => Promise<AuthProfile>;
   signUp: (
     name: string,
     email: string,
     password: string
   ) => Promise<RegisterResult>;
   signOut: () => Promise<void>;
-  saveDisplayName: (name: string) => Promise<Models.User>;
-  updatePassword: (oldPassword: string, newPassword: string) => Promise<Models.User>;
-  updateEmail: (newEmail: string, currentPassword: string) => Promise<Models.User>;
-  sendEmailVerificationOtp: (email: string) => Promise<{
-    userId: string;
-    otpSent: boolean;
-  }>;
-  completeEmailVerificationOtp: (userId: string, otp: string) => Promise<Models.User>;
-  resendRegistrationOtp: (email: string, userId: string) => Promise<boolean>;
-  resendRegistrationEmailOtp: (email: string, userId: string) => Promise<boolean>;
-  completeRegistrationOtp: (userId: string, otp: string) => Promise<Models.User>;
+  saveDisplayName: (name: string) => Promise<AuthProfile>;
+  updatePassword: (
+    oldPassword: string,
+    newPassword: string
+  ) => Promise<AuthProfile>;
+  startEmailChange: (
+    newEmail: string,
+    currentPassword: string
+  ) => Promise<void>;
+  completeEmailChangeOtp: (
+    newEmail: string,
+    otp: string
+  ) => Promise<CompleteEmailChangeOtpResult>;
+  resendEmailChangeOtp: (newEmail: string) => Promise<boolean>;
+  completeRegistrationOtp: (
+    email: string,
+    name: string,
+    password: string,
+    otp: string
+  ) => Promise<AuthProfile>;
+  resendSignupConfirmationEmail: (email: string, name: string) => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser] = useState<Models.User | null>(null);
+  const [user, setUser] = useState<AuthProfile | null>(null);
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    const run = async () => {
+
+    const applySessionUser = (u: SupabaseUser | null) => {
+      if (!cancelled) {
+        setUser(u ? toAuthProfile(u) : null);
+      }
+    };
+
+    const init = async () => {
       try {
-        const next = await restoreUserSessionFromStorage();
-        if (!cancelled && next) {
-          setUser(next);
-        }
+        const { data } = await supabase.auth.getSession();
+        applySessionUser(data.session?.user ?? null);
       } finally {
         if (!cancelled) {
           setIsReady(true);
         }
       }
     };
-    void run();
+
+    void init();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      applySessionUser(session?.user ?? null);
+    });
+
     return () => {
       cancelled = true;
+      sub.subscription.unsubscribe();
     };
   }, []);
 
@@ -94,60 +129,65 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   );
 
   const signOut = useCallback(async () => {
-    await signOutAppwrite();
+    await supabase.auth.signOut();
     setUser(null);
   }, []);
 
   const saveDisplayName = useCallback(async (name: string) => {
-    const next = await updateAccountName(name.trim());
+    const next = await updateAccountDisplayName(name);
     setUser(next);
     return next;
   }, []);
 
   const updatePassword = useCallback(
     async (oldPassword: string, newPassword: string) => {
-      const next = await updateAccountPassword(oldPassword, newPassword);
+      const next = await updateAccountPasswordReauthed(oldPassword, newPassword);
       setUser(next);
       return next;
     },
     []
   );
 
-  const updateEmail = useCallback(
+  const startEmailChange = useCallback(
     async (newEmail: string, currentPassword: string) => {
-      const next = await updateAccountEmail(newEmail, currentPassword);
-      setUser(next);
-      return next;
+      await startEmailChangeWithReauth(newEmail, currentPassword);
     },
     []
   );
 
-  const sendEmailVerificationOtp = useCallback(
-    async (email: string) => sendEmailVerificationOtpToAddress(email),
-    []
-  );
-
-  const completeEmailVerificationOtp = useCallback(
-    async (userId: string, otp: string) => {
-      const next = await completeEmailChangeWithOtp(userId, otp);
-      setUser(next);
-      return next;
+  const handleCompleteEmailChangeOtp = useCallback(
+    async (newEmail: string, otp: string) => {
+      const result = await completeEmailChangeWithOtp(newEmail, otp);
+      if (result.kind === "completed") {
+        setUser(result.profile);
+      }
+      return result;
     },
     []
   );
 
-  const handleResendRegistrationOtp = useCallback(
-    async (email: string, userId: string) =>
-      resendRegistrationEmailOtp(email, userId),
+  const handleResendEmailChangeOtp = useCallback(
+    async (newEmail: string) => resendEmailChangeOtp(newEmail),
     []
   );
 
   const handleCompleteRegistrationOtp = useCallback(
-    async (userId: string, otp: string) => {
-      const next = await completeRegistrationWithEmailOtp(userId, otp);
+    async (email: string, name: string, password: string, otp: string) => {
+      const next = await completeRegistrationWithEmailOtp(
+        email,
+        name,
+        password,
+        otp
+      );
       setUser(next);
       return next;
     },
+    []
+  );
+
+  const handleResendSignup = useCallback(
+    async (email: string, name: string) =>
+      resendSignupConfirmationEmail(email, name),
     []
   );
 
@@ -160,12 +200,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       signOut,
       saveDisplayName,
       updatePassword,
-      updateEmail,
-      sendEmailVerificationOtp,
-      completeEmailVerificationOtp,
-      resendRegistrationOtp: handleResendRegistrationOtp,
-      resendRegistrationEmailOtp: handleResendRegistrationOtp,
+      startEmailChange,
+      completeEmailChangeOtp: handleCompleteEmailChangeOtp,
+      resendEmailChangeOtp: handleResendEmailChangeOtp,
       completeRegistrationOtp: handleCompleteRegistrationOtp,
+      resendSignupConfirmationEmail: handleResendSignup,
     }),
     [
       user,
@@ -175,11 +214,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       signOut,
       saveDisplayName,
       updatePassword,
-      updateEmail,
-      sendEmailVerificationOtp,
-      completeEmailVerificationOtp,
-      handleResendRegistrationOtp,
+      startEmailChange,
+      handleCompleteEmailChangeOtp,
+      handleResendEmailChangeOtp,
       handleCompleteRegistrationOtp,
+      handleResendSignup,
     ]
   );
 

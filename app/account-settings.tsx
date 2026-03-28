@@ -2,7 +2,7 @@ import { icons } from "@/constants/icons";
 import { images } from "@/constants/images";
 import { MAX_PASSWORD_LEN, MIN_PASSWORD_LEN } from "@/constants/auth";
 import { useAuth } from "@/store/AuthContext";
-import { formatAppwriteError } from "@/utils/appwriteErrors";
+import { formatSupabaseError } from "@/utils/supabaseErrors";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -26,20 +26,20 @@ const AccountSettings = () => {
     isReady,
     saveDisplayName,
     updatePassword,
-    updateEmail,
-    sendEmailVerificationOtp,
-    completeEmailVerificationOtp,
-    resendRegistrationEmailOtp,
+    startEmailChange,
+    completeEmailChangeOtp,
+    resendEmailChangeOtp,
   } = useAuth();
 
   const [displayName, setDisplayName] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [emailPassword, setEmailPassword] = useState("");
-  const [emailOtpStep, setEmailOtpStep] = useState<{
-    userId: string;
-    email: string;
-  } | null>(null);
   const [emailOtpCode, setEmailOtpCode] = useState("");
+  const [emailOtpStep, setEmailOtpStep] = useState<{
+    newEmail: string;
+    otpSent: boolean;
+    awaitingSecondFactor?: boolean;
+  } | null>(null);
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -65,6 +65,10 @@ const AccountSettings = () => {
     setEmailPassword(text);
   }, []);
 
+  const handleChangeEmailOtpCode = useCallback((text: string) => {
+    setEmailOtpCode(text.replace(/\s/g, ""));
+  }, []);
+
   const handleChangeOldPassword = useCallback((text: string) => {
     setOldPassword(text);
   }, []);
@@ -75,10 +79,6 @@ const AccountSettings = () => {
 
   const handleChangeConfirmPassword = useCallback((text: string) => {
     setConfirmPassword(text);
-  }, []);
-
-  const handleChangeEmailOtpCode = useCallback((text: string) => {
-    setEmailOtpCode(text.replace(/\s/g, ""));
   }, []);
 
   const handlePressBack = useCallback(() => {
@@ -99,7 +99,7 @@ const AccountSettings = () => {
       await saveDisplayName(trimmed);
       Alert.alert("Saved", "Your display name was updated.");
     } catch (e) {
-      Alert.alert("Could not save name", formatAppwriteError(e, "general"));
+      Alert.alert("Could not save name", formatSupabaseError(e, "general"));
     } finally {
       setSaving(null);
     }
@@ -124,7 +124,7 @@ const AccountSettings = () => {
     }
     Alert.alert(
       "Change email?",
-      "We will update your email and send a one-time code to the new address to verify it.",
+      "We will send a one-time code to the new address. Enter it on the next step.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -133,27 +133,14 @@ const AccountSettings = () => {
             void (async () => {
               setSaving("email");
               try {
-                await updateEmail(next, emailPassword);
-                const { userId, otpSent } = await sendEmailVerificationOtp(next);
-                setNewEmail("");
+                await startEmailChange(next, emailPassword);
                 setEmailPassword("");
                 setEmailOtpCode("");
-                setEmailOtpStep({ userId, email: next });
-                if (!otpSent) {
-                  Alert.alert(
-                    "Code not sent",
-                    "Your email was updated, but we could not send a verification code. Check that Email OTP is enabled in Appwrite, then tap Resend code below.",
-                  );
-                } else {
-                  Alert.alert(
-                    "Check your email",
-                    `We sent a verification code to ${next}. Enter it below.`,
-                  );
-                }
+                setEmailOtpStep({ newEmail: next, otpSent: true, awaitingSecondFactor: false });
               } catch (e) {
                 Alert.alert(
-                  "Could not update email",
-                  formatAppwriteError(e, "general")
+                  "Could not start email change",
+                  formatSupabaseError(e, "general")
                 );
               } finally {
                 setSaving(null);
@@ -163,7 +150,7 @@ const AccountSettings = () => {
         },
       ]
     );
-  }, [user, newEmail, emailPassword, updateEmail, sendEmailVerificationOtp]);
+  }, [user, newEmail, emailPassword, startEmailChange]);
 
   const handlePressVerifyEmailOtp = useCallback(async () => {
     if (!emailOtpStep) {
@@ -175,26 +162,45 @@ const AccountSettings = () => {
     }
     setSaving("emailOtp");
     try {
-      await completeEmailVerificationOtp(
-        emailOtpStep.userId,
+      const outcome = await completeEmailChangeOtp(
+        emailOtpStep.newEmail,
         emailOtpCode
       );
-      setEmailOtpStep(null);
       setEmailOtpCode("");
-      Alert.alert("Email verified", "Your new email is verified.");
+      if (outcome.kind === "awaiting_second_factor") {
+        setEmailOtpStep({
+          ...emailOtpStep,
+          awaitingSecondFactor: true,
+        });
+        Alert.alert(
+          "One more code",
+          "Supabase sent a code to both your current and new addresses. Enter the code from the other inbox next (the one you have not used yet)."
+        );
+        return;
+      }
+      setEmailOtpStep(null);
+      setNewEmail("");
+      Alert.alert("Email updated", "Your new email is verified.", [
+        {
+          text: "OK",
+          onPress: () => {
+            if (router.canGoBack()) {
+              router.back();
+            } else {
+              router.replace("/(tabs)/profile");
+            }
+          },
+        },
+      ]);
     } catch (e) {
       Alert.alert(
         "Could not verify",
-        formatAppwriteError(e, "otp")
+        formatSupabaseError(e, "otp")
       );
     } finally {
       setSaving(null);
     }
-  }, [
-    emailOtpStep,
-    emailOtpCode,
-    completeEmailVerificationOtp,
-  ]);
+  }, [emailOtpStep, emailOtpCode, completeEmailChangeOtp, router]);
 
   const handlePressResendEmailOtp = useCallback(async () => {
     if (!emailOtpStep) {
@@ -202,14 +208,14 @@ const AccountSettings = () => {
     }
     setSaving("emailOtp");
     try {
-      const ok = await resendRegistrationEmailOtp(
-        emailOtpStep.email,
-        emailOtpStep.userId
+      const ok = await resendEmailChangeOtp(emailOtpStep.newEmail);
+      setEmailOtpStep((prev) =>
+        prev ? { ...prev, otpSent: ok } : prev
       );
       if (!ok) {
         Alert.alert(
           "Could not resend",
-          "Wait a minute, then try again. Ensure Email OTP is enabled in Appwrite.",
+          "Wait a minute, then try again."
         );
       } else {
         Alert.alert("Sent", "Check your inbox for a new code.");
@@ -217,7 +223,7 @@ const AccountSettings = () => {
     } finally {
       setSaving(null);
     }
-  }, [emailOtpStep, resendRegistrationEmailOtp]);
+  }, [emailOtpStep, resendEmailChangeOtp]);
 
   const handlePressCancelEmailOtp = useCallback(() => {
     setEmailOtpStep(null);
@@ -254,7 +260,7 @@ const AccountSettings = () => {
     } catch (e) {
       Alert.alert(
         "Could not update password",
-        formatAppwriteError(e, "general")
+        formatSupabaseError(e, "general")
       );
     } finally {
       setSaving(null);
@@ -355,9 +361,10 @@ const AccountSettings = () => {
           </TouchableOpacity>
 
           <Text className="text-lg text-white font-bold mb-3">Email</Text>
-          <Text className="text-light-300 text-xs mb-2">
-            Enter a new email and your current password. We will send a one-time
-            code to the new address to verify it.
+          <Text className="text-light-300 text-xs mb-2 leading-5">
+            Enter a new email and your current password. If your project uses
+            secure email change, Supabase emails a code to both your current and
+            new addresses—you will enter each code, one after the other.
           </Text>
           <TextInput
             className="bg-dark-100 text-white rounded-xl px-4 py-3 mb-3 border border-dark-200"
@@ -390,18 +397,21 @@ const AccountSettings = () => {
             disabled={saving !== null || !user || !!emailOtpStep}
           >
             <Text className="text-white font-semibold">
-              {saving === "email" ? "Updating…" : "Update email"}
+              {saving === "email" ? "Sending code…" : "Send code to new email"}
             </Text>
           </TouchableOpacity>
 
           {emailOtpStep ? (
             <View className="mt-2 mb-10 border border-accent/40 rounded-2xl p-4 bg-dark-100/80">
               <Text className="text-white font-bold text-base mb-1">
-                Verify new email
+                {emailOtpStep.awaitingSecondFactor
+                  ? "Second verification code"
+                  : "Verify email change"}
               </Text>
-              <Text className="text-light-300 text-xs mb-4">
-                Code sent to {emailOtpStep.email}. Enter the numbers from the
-                email.
+              <Text className="text-light-300 text-xs mb-4 leading-5">
+                {emailOtpStep.awaitingSecondFactor
+                  ? `Enter the code from your other inbox (not the one you already used). New address: ${emailOtpStep.newEmail}.`
+                  : `Check ${user.email} and ${emailOtpStep.newEmail}. Enter one of the codes below; you will be asked for the other code next if required.`}
               </Text>
               <Text className="text-light-200 text-sm mb-1">Verification code</Text>
               <TextInput

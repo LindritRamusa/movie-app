@@ -1,7 +1,7 @@
 import { icons } from "@/constants/icons";
 import { images } from "@/constants/images";
 import { usePasswordRecovery } from "@/hooks/usePasswordRecovery";
-import { formatAppwriteError } from "@/utils/appwriteErrors";
+import { formatSupabaseError } from "@/utils/supabaseErrors";
 import { Link, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
@@ -41,7 +41,7 @@ const ForgotPassword = () => {
       await requestRecovery(trimmed);
       setSent(true);
     } catch (e) {
-      setFormError(formatAppwriteError(e, "general"));
+      setFormError(formatSupabaseError(e, "general"));
     } finally {
       setSubmitting(false);
     }

@@ -1,4 +1,4 @@
-import { updateSearchCount } from "@/services/appwrite";
+import { updateSearchCount } from "@/services/supabase";
 import { useEffect, useRef } from "react";
 
 export const useSearchCountUpdate = (

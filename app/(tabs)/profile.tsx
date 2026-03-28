@@ -13,9 +13,9 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import type { Models } from "react-native-appwrite";
+import type { AuthProfile } from "@/types/auth-profile";
 
-function getDisplayLabel(user: Models.User): string {
+function getDisplayLabel(user: AuthProfile): string {
   const name = user.name?.trim();
   if (name) {
     return name;
@@ -24,7 +24,7 @@ function getDisplayLabel(user: Models.User): string {
   return emailLocal || "User";
 }
 
-function getInitials(user: Models.User): string {
+function getInitials(user: AuthProfile): string {
   const label = getDisplayLabel(user);
   const parts = label.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
@@ -62,7 +62,7 @@ const Profile = () => {
   const handlePressLogout = useCallback(() => {
     Alert.alert(
       "Log out",
-      "Sign out of your Appwrite account on this device? Saved movies stay on the device.",
+      "Sign out on this device? Saved movies stay on the device.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -108,8 +108,8 @@ const Profile = () => {
 
           <Text className="text-white text-2xl font-bold mb-2">Welcome</Text>
           <Text className="text-light-200 text-base mb-10 leading-6">
-            Create an account or sign in with Appwrite email/password. Your
-            session is stored on this device.
+            Create an account or sign in with email and password. Your session
+            is stored on this device.
           </Text>
 
           <TouchableOpacity

@@ -1,7 +1,8 @@
 import {
-  completePasswordRecovery,
+  applyRecoverySession,
   requestPasswordRecovery,
-} from "@/services/appwrite";
+  updatePasswordWithRecoverySession,
+} from "@/services/supabase";
 import { useCallback } from "react";
 
 export const usePasswordRecovery = () => {
@@ -10,8 +11,13 @@ export const usePasswordRecovery = () => {
   }, []);
 
   const completeRecovery = useCallback(
-    async (userId: string, secret: string, password: string) => {
-      await completePasswordRecovery(userId, secret, password);
+    async (
+      accessToken: string,
+      refreshToken: string,
+      newPassword: string
+    ) => {
+      await applyRecoverySession(accessToken, refreshToken);
+      await updatePasswordWithRecoverySession(newPassword);
     },
     []
   );

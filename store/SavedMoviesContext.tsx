@@ -63,7 +63,7 @@ export const SavedMoviesProvider = ({ children }: { children: ReactNode }) => {
   const [savedMovies, setSavedMovies] = useState<Movie[]>([]);
   const [isHydrated, setIsHydrated] = useState(false);
 
-  const userId = user?.$id ?? null;
+  const userId = user?.id ?? null;
   const isGuest = !user;
 
   useEffect(() => {

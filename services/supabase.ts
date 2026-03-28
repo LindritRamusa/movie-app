@@ -8,14 +8,37 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient } from "@supabase/supabase-js";
 import "react-native-url-polyfill/auto";
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: {
-    storage: AsyncStorage,
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: false,
-  },
-});
+const createMemoryAuthStorage = () => {
+  const store: Record<string, string> = {};
+  return {
+    getItem: async (key: string): Promise<string | null> =>
+      Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null,
+    setItem: async (key: string, value: string): Promise<void> => {
+      store[key] = value;
+    },
+    removeItem: async (key: string): Promise<void> => {
+      delete store[key];
+    },
+  };
+};
+
+const authStorage =
+  typeof globalThis.window === "undefined"
+    ? createMemoryAuthStorage()
+    : AsyncStorage;
+
+export const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  {
+    auth: {
+      storage: authStorage,
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: false,
+    },
+  }
+);
 
 interface MovieSearchRow {
   search_term: string;
